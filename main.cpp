@@ -85,13 +85,16 @@ int main()
     }
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND); //Enable blending.
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
 
 
 
     // build and compile our shader program
     // ------------------------------------
     Shader ourShader("../vec_shader.vs", "../frag_shader.fs"); // you can name your shader files however you like
-
+    Shader vec2("../vec2.vs", "../frag2.fs");
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
 
@@ -101,8 +104,8 @@ int main()
     GDALRasterBand *poBand;
     //const char *fname = "../data/true.bil";
     //const char *ref = "../data/true.bil";
-    const char *fname = "../data/mount.bil";
-    const char *ref = "../data/mount.bil";
+    const char *fname = "/home/ben/Desktop/pigeon2.tif";
+
     vert_t *vertices;
 
     GDALAllRegister();
@@ -114,22 +117,18 @@ int main()
         return 1;
     }
 
-    refDataset = (GDALDataset *) GDALOpen(ref, GA_ReadOnly);
-
-    if (refDataset == nullptr) {
-        std::cout << "File: " << fname << " not found.\n Exiting.\n";
-        return 1;
-    }
 
     int width = GDALGetRasterXSize(poDataset);
     int height = GDALGetRasterYSize(poDataset);
+    int startx = 0;//800;
+    int starty = 0;//800;
 
     double adfGeoTransform[6]; // Origin: 0,3 | Pix Size: 1,5
-    refDataset->GetGeoTransform(adfGeoTransform);
+    poDataset->GetGeoTransform(adfGeoTransform);
     float orig_x = 0;//adfGeoTransform[0];
     float orig_y = 0;//adfGeoTransform[3];
-    float res_x = 27;//adfGeoTransform[1];
-    float res_y = -27;//adfGeoTransform[5];
+    float res_x = adfGeoTransform[1];
+    float res_y = adfGeoTransform[5];
 
     std::cout << orig_x << " " << orig_y << " " << res_x << " " << res_y << "\n";
 
@@ -156,7 +155,7 @@ int main()
 
     float *pafScanline;
     pafScanline = (float *) CPLMalloc(sizeof(float)*width*height);
-    auto err = poBand->RasterIO(GF_Read,0,0,width,height,pafScanline,width,height,GDT_Float32,0,0);
+    auto err = poBand->RasterIO(GF_Read,startx,starty,width,height,pafScanline,width,height,GDT_Float32,0,0);
 
     std::vector<unsigned int> indices;
 
@@ -185,7 +184,7 @@ int main()
                 v.z = 0;
             }
             else{
-                v.z = ((pafScanline[(i*width)+j]));
+                v.z = ((pafScanline[(i*width)+j]) / res_x) - min_z;
             }
 
 
@@ -193,16 +192,16 @@ int main()
 
             if(i == 0)
             {
-                v.col = {1.0f, 0.0f, 0.0f,1.0f};
+                v.col = {1.0f, 0.0f, 0.0f,0.2f};
 
             }
             else if(j == 0)
             {
-                v.col = {0.0f, 1.0f, 0.0f,1.0f};
+                v.col = {0.0f, 1.0f, 0.0f,0.2f};
 
             }
             else{
-                v.col = {colz/2, colz,1.0f,1.0f};
+                v.col = {colz/2, colz,1.0f,0.2f};
 
             }
 
@@ -229,16 +228,14 @@ int main()
         }
     }
 
-    int myFill = 1; // 1 = fill, 2 = line
-
-    /*
-    for(int i =1000; i < 1500; i++)
-    {
-        printf("V: %i VVV: %f %f %f\n", i, vertices[i].x, vertices[i].y, vertices[i].z);
-    }
-     */
-
-
+    float line_verts[] = {
+            -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f,
+            0.5f, 0.0f,  0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.5f,  0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, -0.5f, 0.0f, 0.0f, 1.0f,
+            0.0f, 0.0f,  0.5f, 0.0f, 0.0f, 1.0f
+    };
 
     unsigned int VBO, VAO, VBE, VBO1, VAO1;
     glGenVertexArrays(1, &VAO);
@@ -263,15 +260,48 @@ int main()
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 7 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
+    glGenVertexArrays(1, &VAO1);
+    glGenBuffers(1, &VBO1);
+
+    glBindVertexArray(VAO1);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO1);
+
+    glBufferData(GL_ARRAY_BUFFER, sizeof(line_verts), line_verts, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // color attribute
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
     // You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
     // VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.
     // glBindVertexArray(0);
 
     glfwSetMouseButtonCallback(window, mouse_button_callback);
 
+    glm::mat4 model = glm::mat4(1.0f);
+    glm::mat4 view = glm::mat4(1.0f);
+    glm::mat4 projection = glm::mat4(1.0f);
+    unsigned int modelLoc = glGetUniformLocation(ourShader.ID, "model");
+    unsigned int viewLoc = glGetUniformLocation(ourShader.ID, "view");
+    unsigned int projectionLoc = glGetUniformLocation(ourShader.ID, "projection");
+
+    int vertexColorLocation = glGetUniformLocation(ourShader.ID, "color");
+
+    unsigned int viewLoc2 = glGetUniformLocation(vec2.ID, "view");
+    unsigned int projectionLoc2 = glGetUniformLocation(vec2.ID, "projection");
 
 
-    glLineWidth(1);
+    //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+
+
+
+    glLineWidth(1.0);
+
 
     // render loop
     // -----------
@@ -287,64 +317,49 @@ int main()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // render the triangle
-        ourShader.use();
-        glBindVertexArray(VAO);
 
-        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::mat4(1.0f);
         model = glm::scale(model, glm::vec3((1/bigger) + zoom, (1/bigger)+zoom, (1/bigger)+ zoom + h));
         model = glm::translate(model, glm::vec3(-(width*res_x/2), -(height*res_x/2), 0.0f));
 
-        glm::mat4 view = glm::mat4(1.0f);
+        view = glm::mat4(1.0f);
         view = glm::translate(view, glm::vec3(tx, ty, -2.0 + tz));
         view = glm::rotate(view, glm::radians(-60.0f + x_rot), glm::vec3(1.0f, 0.0f, 0.0f));
         view = glm::rotate(view, glm::radians(y_rot), glm::vec3(0.0f, 1.0f, 0.0f));
         view = glm::rotate(view, glm::radians(20.0f + z_rot), glm::vec3(0.0f, 0.0f, 1.0f));
 
-        glm::mat4 projection;
         projection = glm::perspective(glm::radians(45.0f + p), 1.0f, 0.01f, 100.0f);
 
 
-        glm::vec4 l1(0.7f,0.7f,0.7f,1.0f);
-        glm::vec4 l2(1.0f,0.8f,1.0f,1.0f);
+
+        //glUniform4f(vertexColorLocation, 0.0f, 1.0f, 0.0f, 1.0f);
+
+        vec2.use();
+        glBindVertexArray(VAO1);
+        glUniformMatrix4fv(viewLoc2, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projectionLoc2, 1, GL_FALSE, glm::value_ptr(projection));
 
 
+        glDrawArrays(GL_LINES, 0, 6);
 
-        unsigned int modelLoc = glGetUniformLocation(ourShader.ID, "model");
+        ourShader.use();
+        glBindVertexArray(VAO);
+
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
-        unsigned int viewLoc = glGetUniformLocation(ourShader.ID, "view");
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-
-        unsigned int projectionLoc = glGetUniformLocation(ourShader.ID, "projection");
         glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-/*
-        if(myFill == 1)
-        {
-            glUniform4fv(glGetUniformLocation(ourShader.ID, "aColor"), 1, &l2[0]);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glDrawElements(
-                    GL_TRIANGLES,      // mode
-                    indices.size(),    // count
-                    GL_UNSIGNED_INT,   // type
-                    (void*)0           // element array buffer offset
-            );
 
-        }
-        */
-
-            glUniform4fv(glGetUniformLocation(ourShader.ID, "aColor"), 1, &l1[0]);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-            glDrawElements(
-                    GL_TRIANGLES,      // mode
-                    indices.size(),    // count
-                    GL_UNSIGNED_INT,   // type
-                    (void*)0           // element array buffer offset
-            );
+        glDrawElements(
+                GL_TRIANGLES,      // mode
+                indices.size(),    // count
+                GL_UNSIGNED_INT,   // type
+                (void*)0           // element array buffer offset
+        );
 
 
-        // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
-        // -------------------------------------------------------------------------------
+
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -353,6 +368,8 @@ int main()
     // ------------------------------------------------------------------------
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, &VAO1);
+    glDeleteBuffers(1, &VBO1);
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
